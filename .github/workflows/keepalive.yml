@@ -1,0 +1,32 @@
+name: Keep Alive
+
+# 作用：定期给仓库打一个心跳提交，保持仓库"有活动"，
+# 避免 GitHub 在仓库 60 天无活动时自动停用定时签到工作流。
+on:
+  schedule:
+    # 每月 1 号和 15 号各跑一次（间隔约 15 天，远小于 60 天阈值）
+    - cron: '0 0 1,15 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Commit heartbeat
+        run: |
+          date -u '+%Y-%m-%dT%H:%M:%SZ' > .github/keepalive
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/keepalive
+          if git diff --cached --quiet; then
+            echo "no change"
+          else
+            git commit -m "chore: keepalive $(date -u '+%Y-%m-%d')"
+          fi
+          git push
