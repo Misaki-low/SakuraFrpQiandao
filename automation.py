@@ -27,9 +27,11 @@ class CheckInAutomation:
             from human_simulator import HumanSimulator  # 如果模块名不同
         self.simulator = HumanSimulator()
         self.max_retries = config.max_retries
-    
-    def run(self):
-        """执行签到流程"""
+        # 模型接口连续失败计数（429 限流等临时错误不该让整次签到直接作废）
+        self._model_error_count = 0
+
+    def run(self) -> bool:
+        """执行签到流程，返回是否成功"""
         # GitHub Actions 环境自动使用 headless 模式
         headless = os.getenv('CI') == 'true' or os.getenv('HEADLESS', 'false').lower() == 'true'
 
@@ -73,28 +75,33 @@ class CheckInAutomation:
                 # 步骤1: 登录
                 if not self._login(page):
                     logger.error("登录失败")
-                    return
+                    return False
 
                 # 步骤2: 跳转到 处理年龄
                 if not self._navigate_to_sakurafrp(page):
                     logger.error("跳转到 SakuraFrp 失败")
-                    return
+                    return False
 
                 # 步骤3: 执行签到
                 if not self._perform_checkin(page):
                     logger.error("签到失败")
-                    page.screenshot(path="error_screenshot.png", full_page=True)
-                    with open("error_page_source.html", "w", encoding="utf-8") as f:
-                        f.write(page.content())
-                    return
+                    try:
+                        page.screenshot(path="error_screenshot.png", full_page=True)
+                        with open("error_page_source.html", "w", encoding="utf-8") as f:
+                            f.write(page.content())
+                    except Exception as shot_error:
+                        logger.warning(f"保存失败现场截图时出错: {shot_error}")
+                    return False
 
                 logger.info("✓ 签到流程完成")
+                return True
 
             except ModelApiError:
                 logger.error("模型 API 调用失败，终止签到流程")
-                return
+                return False
             except Exception as e:
                 logger.error(f"执行过程中发生错误: {e}", exc_info=True)
+                return False
             finally:
                 if browser and headless:
                     browser.close()
@@ -244,8 +251,15 @@ class CheckInAutomation:
 
                 return False
 
-            except ModelApiError:
-                raise
+            except ModelApiError as e:
+                self._model_error_count += 1
+                if self._model_error_count >= 3:
+                    logger.error(f"模型接口连续失败 {self._model_error_count} 次，放弃本次签到")
+                    raise
+                wait = 15 * self._model_error_count
+                logger.warning(f"模型接口出错（{e}），{wait} 秒后继续下一次尝试")
+                time.sleep(wait)
+                continue
             except PlaywrightError as e:
                 logger.error(f"签到过程出错: {e}", exc_info=True)
                 return False
