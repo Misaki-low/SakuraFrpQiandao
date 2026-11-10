@@ -87,6 +87,28 @@ class CaptchaHandler:
             logger.error(f"处理验证码时发生错误: {e}", exc_info=True)
             return False
 
+    def _create_completion_with_retry(self, **kwargs):
+        """调用视觉模型，遇到限流/服务端错误时退避重试。
+
+        免费模型（如智谱 GLM 免费档）经常返回 429，原实现一次就放弃，
+        导致整次签到直接作废。这里做 3 次退避重试，仍失败再抛给上层。
+        """
+        attempts = 3
+        wait_plan = [10, 20]
+        for attempt in range(1, attempts + 1):
+            try:
+                return self.client.chat.completions.create(**kwargs)
+            except Exception as e:
+                status = getattr(e, "status_code", None)
+                retryable = status in (429, 500, 502, 503, 504) or status is None
+                if not retryable or attempt >= attempts:
+                    raise
+                wait = wait_plan[attempt - 1]
+                logger.warning(
+                    f"模型接口返回 {status}，{wait} 秒后进行第 {attempt + 1}/{attempts} 次尝试"
+                )
+                time.sleep(wait)
+
     def _recognize_captcha(self, img_url: str, imagebase64: bool = False) -> Optional[Dict]:
         """使用视觉模型识别验证码，支持 imagebase64 方式"""
         try:
@@ -107,7 +129,7 @@ class CaptchaHandler:
                 except Exception as e:
                     logger.error(f"图片转base64失败: {e}")
                     raise ModelApiError("图片转base64失败") from e
-            response = self.client.chat.completions.create(
+            response = self._create_completion_with_retry(
                 model=self.config.model,
                 messages=[{
                     'role': 'user',
