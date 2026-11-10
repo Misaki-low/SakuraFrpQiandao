@@ -41,6 +41,24 @@ jobs:
         run: |
           python main.py
       
+      # 第一次失败（常见原因：验证码识别偏差、免费模型 429 限流）时再跑一遍。
+      # 脚本内部已做退避重试，这里再兜一层，两次都失败才算失败。
+      - name: 失败后重试一次
+        if: failure()
+        env:
+          SAKURAFRP_USER: ${{ secrets.SAKURAFRP_USER }}
+          SAKURAFRP_PASS: ${{ secrets.SAKURAFRP_PASS }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+          API_KEY: ${{ secrets.API_KEY }}
+          MODEL: ${{ secrets.MODEL }}
+          IMAGE_AS_BASE64: ${{ secrets.IMAGE_AS_BASE64 || 'false' }}
+          CI: 'true'
+          HEADLESS: 'true'
+        run: |
+          echo "上次执行未成功，等待 90 秒后重试..."
+          sleep 90
+          python main.py
+      
       - name: 发送邮件通知
         if: always()
         env:
@@ -57,5 +75,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: checkin-logs
-          path: checkin.log
+          path: |
+            checkin.log
+            error_screenshot.png
+            error_page_source.html
           retention-days: 7
