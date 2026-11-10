@@ -30,6 +30,7 @@ class Config:
     base_url: str
     api_key: str
     model: str
+    model_fallback: Optional[str] = None
     chrome_binary_path: Optional[str] = None
     max_retries: int = 10
     image_as_base64: bool = False
@@ -55,6 +56,7 @@ class Config:
             base_url=get_env("BASE_URL"),
             api_key=get_env("API_KEY"),
             model=get_env("MODEL"),
+            model_fallback=(get_env("MODEL_FALLBACK", required=False) or None),
             chrome_binary_path=get_env("CHROME_BINARY_PATH", required=False),
             max_retries=int(get_env("MAX_RETRIES", required=False) or 10),
             image_as_base64=get_bool_env("IMAGE_AS_BASE64", default=False)
