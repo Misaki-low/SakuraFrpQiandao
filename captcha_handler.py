@@ -87,6 +87,17 @@ class CaptchaHandler:
             logger.error(f"处理验证码时发生错误: {e}", exc_info=True)
             return False
 
+    def _model_candidates(self):
+        """候选模型列表：先主模型，再 MODEL_FALLBACK（如果配了）。"""
+        models = []
+        primary = (getattr(self.config, "model", "") or "").strip()
+        if primary:
+            models.append(primary)
+        fallback = (getattr(self.config, "model_fallback", "") or "").strip()
+        if fallback and fallback not in models:
+            models.append(fallback)
+        return models
+
     def _create_completion_with_retry(self, **kwargs):
         """调用视觉模型，遇到限流/服务端错误时退避重试。
 
@@ -129,17 +140,29 @@ class CaptchaHandler:
                 except Exception as e:
                     logger.error(f"图片转base64失败: {e}")
                     raise ModelApiError("图片转base64失败") from e
-            response = self._create_completion_with_retry(
-                model=self.config.model,
-                messages=[{
-                    'role': 'user',
-                    'content': [
-                        {'type': 'text', 'text': prompt},
-                        {'type': 'image_url', 'image_url': {'url': image_url_value}}
-                    ]
-                }],
-                stream=False
-            )
+            content_parts = [
+                {'type': 'text', 'text': prompt},
+                {'type': 'image_url', 'image_url': {'url': image_url_value}}
+            ]
+
+            # 主模型挂了（限流/额度/服务异常）就换备用模型接着试
+            response = None
+            last_error = None
+            for model_name in self._model_candidates():
+                try:
+                    logger.info(f"使用模型识别: {model_name}")
+                    response = self._create_completion_with_retry(
+                        model=model_name,
+                        messages=[{'role': 'user', 'content': content_parts}],
+                        stream=False
+                    )
+                    break
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"模型 {model_name} 调用失败: {e}")
+                    continue
+            if response is None:
+                raise ModelApiError("所有候选模型均调用失败") from last_error
         
             response_data = response.model_dump() if hasattr(response, "model_dump") else {}
             logger.debug(f"模型完整响应: {response_data}")
@@ -201,20 +224,38 @@ class CaptchaHandler:
         if code_block_match:
             return code_block_match.group(1).strip()
 
-        start = text.find('{')
-        if start == -1:
+        candidates = CaptchaHandler._balanced_objects(text)
+        if not candidates:
             return None
 
-        stack = 0
-        for i in range(start, len(text)):
-            if text[i] == '{':
-                stack += 1
-            elif text[i] == '}':
-                stack -= 1
-                if stack == 0:
-                    return text[start:i + 1].strip()
+        # 思考型模型会在正文里带一堆花括号，优先取含 "10" 键的那块（九宫格结果）
+        for candidate in candidates:
+            if '"10"' in candidate:
+                return candidate
+        return candidates[0]
 
-        return None
+    @staticmethod
+    def _balanced_objects(text: str):
+        """按花括号配对切出所有顶层 JSON 片段。"""
+        results = []
+        index = 0
+        length = len(text)
+        while index < length:
+            if text[index] != '{':
+                index += 1
+                continue
+            depth = 0
+            for j in range(index, length):
+                if text[j] == '{':
+                    depth += 1
+                elif text[j] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        results.append(text[index:j + 1].strip())
+                        index = j
+                        break
+            index += 1
+        return results
 
     def _click_captcha_items(self, page: Page, recognition_result: Dict) -> bool:
         """
