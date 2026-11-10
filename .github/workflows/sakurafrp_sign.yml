@@ -35,6 +35,7 @@ jobs:
           BASE_URL: ${{ secrets.BASE_URL }}
           API_KEY: ${{ secrets.API_KEY }}
           MODEL: ${{ secrets.MODEL }}
+          MODEL_FALLBACK: ${{ secrets.MODEL_FALLBACK }}
           IMAGE_AS_BASE64: ${{ secrets.IMAGE_AS_BASE64 || 'false' }}
           CI: 'true'
           HEADLESS: 'true'
@@ -51,6 +52,7 @@ jobs:
           BASE_URL: ${{ secrets.BASE_URL }}
           API_KEY: ${{ secrets.API_KEY }}
           MODEL: ${{ secrets.MODEL }}
+          MODEL_FALLBACK: ${{ secrets.MODEL_FALLBACK }}
           IMAGE_AS_BASE64: ${{ secrets.IMAGE_AS_BASE64 || 'false' }}
           CI: 'true'
           HEADLESS: 'true'
